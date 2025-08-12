@@ -18,7 +18,7 @@ def _default_cb(msg, addr):
     print("[v7rc] UDP received:", msg, "from", addr)
 
 # Initialize AP and optionally start LED and UDP server
-def init_ap(essid, password, cb=None, use_default_led=True, set_color=None):
+def init_ap(essid, password, cb=None, use_default_led=True, set_color=None, udp_ip='192.168.4.1', udp_port=6188):
     wlan = network.WLAN(network.AP_IF)
     wlan.config(essid=essid, password=password, authmode=network.AUTH_WPA_WPA2_PSK)
     wlan.active(True)
@@ -42,9 +42,9 @@ def init_ap(essid, password, cb=None, use_default_led=True, set_color=None):
             sta_list = wlan.status('stations')
             if set_color_fn:
                 if sta_list:
-                    set_color_fn(0, 255, 0)  # Green
+                    set_color_fn(0, 0, 255)  # Blue
                 else:
-                    set_color_fn(255, 0, 0)  # Red
+                    set_color_fn(0, 255, 0)  # Green
             await uasyncio.sleep(1)
 
     # Start all services (UDP + LED monitor)
@@ -52,7 +52,7 @@ def init_ap(essid, password, cb=None, use_default_led=True, set_color=None):
         tasks = []
         if cb:
             s = UDPServer()
-            tasks.append(s.serve(cb, '192.168.4.1', 6188))
+            tasks.append(s.serve(cb, udp_ip, udp_port))
         tasks.append(monitor_sta())
         await uasyncio.gather(*tasks)
 

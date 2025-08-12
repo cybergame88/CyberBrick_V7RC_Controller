@@ -9,6 +9,10 @@
 		},
 		{
 			"path": "../CyberBrick_Controller_Core"
+		},
+		{
+			"name": "CyberBrick_V7RC_Forklift",
+			"path": "../CyberBrick_V7RC_Forklift"
 		}
 	],
 	"settings": {}
