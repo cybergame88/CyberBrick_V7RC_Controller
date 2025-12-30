@@ -67,9 +67,7 @@ cyberbrick-v7rc/
 │   └── v7rc.py            # V7RC protocol
 ├── boot.py                # Boot script
 ├── bbl_product.py         # Product info module
-├── upload_mpremote.ps1    # Upload script (mpremote)
-├── upload.ps1             # Upload script (ampy)
-├── kill_and_upload.ps1    # Helper script
+├── upload.ps1             # 🔧 Upload script (tối ưu)
 ├── HARDWARE_GUIDE.md      # 📖 Hướng dẫn kết nối phần cứng
 └── README_VI.md           # 📖 Tài liệu này
 ```
@@ -176,7 +174,7 @@ Get-Process -Name python* | Stop-Process -Force
 
 # Đợi 2 giây và thử lại
 Start-Sleep -Seconds 2
-.\upload_mpremote.ps1
+.\upload.ps1
 ```
 
 ### ESP32 Reset Liên Tục
@@ -226,6 +224,6 @@ CyberBrick Codebase License - Xem [LICENSE.txt](LICENSE.txt)
 
 ---
 
-**Phiên bản**: 1.0  
-**Ngày cập nhật**: 2025-12-26  
+**Phiên bản**: 1.1  
+**Ngày cập nhật**: 2025-12-30  
 **Tác giả**: CyberBrick V7RC Community
