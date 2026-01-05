@@ -139,6 +139,47 @@ class MotorsController:
         else:
             print("[motors]Invalid motor index. Must be between 1 and 2.")
 
+    def set_tank_mode(self, throttle_pwm, steering_pwm):
+        """
+        Sets motor speeds using tank mode mixing from V7RC SRT command.
+        
+        Tank mode converts throttle and steering inputs into differential
+        motor speeds for tracked/wheeled robots.
+        
+        Args:
+            throttle_pwm (int): Forward/reverse control (0-2000, 1000=neutral)
+            steering_pwm (int): Left/right steering (0-2000, 1000=neutral)
+            
+        Example:
+            >>> # Move forward: throttle=1500, steering=1000 (neutral)
+            >>> motors.set_tank_mode(1500, 1000)
+            >>> # Turn right while moving: throttle=1500, steering=1500
+            >>> motors.set_tank_mode(1500, 1500)
+        """
+        # Convert PWM values (0-2000) to -1024 to +1024 range
+        # 1000 is neutral (center)
+        throttle = int((throttle_pwm - 1000) * 2048 / 1000)
+        steering = int((steering_pwm - 1000) * 2048 / 1000)
+        
+        # Clamp to valid range
+        throttle = max(-2048, min(2048, throttle))
+        steering = max(-2048, min(2048, steering))
+        
+        # Tank mixing algorithm
+        # Left motor: throttle + steering
+        # Right motor: throttle - steering
+        left_speed = throttle + steering
+        right_speed = throttle - steering
+        
+        # Clamp to motor speed range
+        left_speed = max(-2048, min(2048, left_speed))
+        right_speed = max(-2048, min(2048, right_speed))
+        
+        # Apply to motors (motor 1 = left, motor 2 = right)
+        self.set_speed(1, left_speed)
+        self.set_speed(2, right_speed)
+
+
     def stop(self, motor_idx):
         """
         Stops a motor by setting its duty cycles to 0.

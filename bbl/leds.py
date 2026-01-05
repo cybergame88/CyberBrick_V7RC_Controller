@@ -268,6 +268,49 @@ pin configuration.
         self.is_on = False
         self.current_effect_start_time = utime.ticks_ms()
 
+    def set_led_rgbm(self, led_idx, r, g, b, mode, blink_ms=0):
+        """
+        Sets LED using V7RC RGBM format.
+        
+        This method is designed for V7RC LED/LE2 commands which use
+        RGBM format (Red, Green, Blue, Mode).
+        
+        Args:
+            led_idx (int): LED index (0-3) to control
+            r (int): Red value (0-255)
+            g (int): Green value (0-255)
+            b (int): Blue value (0-255)
+            mode (str): 'off', 'solid', or 'blink'
+            blink_ms (int): Blink on-time in milliseconds (for blink mode)
+            
+        Example:
+            >>> # Set LED 0 to solid red
+            >>> led1.set_led_rgbm(0, 255, 0, 0, 'solid')
+            >>> # Set LED 1 to blink green (500ms on per second)
+            >>> led1.set_led_rgbm(1, 0, 255, 0, 'blink', 500)
+        """
+        if not 0 <= led_idx <= 3:
+            print("[LEDS]Invalid LED index. Must be between 0 and 3.")
+            return
+            
+        rgb = (r << 16) | (g << 8) | b
+        led_mask = 1 << led_idx
+        
+        if mode == 'off':
+            # Turn off this LED
+            self.set_led_effect(0, 0, 1, led_mask, 0x000000)
+        elif mode == 'solid':
+            # Solid color (effect 0 with infinite repeat)
+            self.set_led_effect(0, 0, 0xFF, led_mask, rgb)
+        elif mode == 'blink':
+            # Blink effect (effect 1)
+            # Duration is 2× blink_ms (on + off time)
+            duration = blink_ms * 2 if blink_ms > 0 else 1000
+            self.set_led_effect(1, duration, 0xFF, led_mask, rgb)
+        else:
+            print(f"[LEDS]Unknown mode: {mode}")
+
+
 
 if __name__ == '__main__':
     import uasyncio

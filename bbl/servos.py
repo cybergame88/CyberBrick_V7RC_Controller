@@ -79,6 +79,41 @@ class ServosController:
 
         self.servos_map[internal_idx].duty(duty)
 
+    def set_pwm(self, servo_idx, pwm_us):
+        """
+        Sets the PWM pulse width of a specified servo motor in microseconds.
+        
+        This method is used for V7RC protocol SRV/SR2 commands which specify
+        PWM values directly (typically 500-2500μs range).
+
+        Args:
+            servo_idx (int): Index of the servo motor (1 to 4).
+            pwm_us (int): PWM pulse width in microseconds (500-2500).
+
+        Example:
+            >>> # Set servo 1 to 1500μs (center position)
+            >>> servos.set_pwm(1, 1500)
+        """
+        if not 500 <= pwm_us <= 2500:
+            print("[servo]Invalid PWM value. Must be between 500 and 2500μs.")
+            return
+
+        # Convert PWM microseconds to duty cycle
+        # 500μs = duty 25, 2500μs = duty 125
+        duty = int((pwm_us - 500) * 102 / 2000 + 25)
+        internal_idx = servo_idx - 1
+
+        # Calculate equivalent angle for info tracking
+        angle = int((pwm_us - 500) * 180 / 2000)
+        self.reset_info(servo_idx, angle)
+
+        if not 0 <= internal_idx < len(self.servos_map):
+            print("[servo]Invalid servo index. Must be between 1 and 4.")
+            return
+
+        self.servos_map[internal_idx].duty(duty)
+
+
     def set_angle_stepping(self, servo_idx, angle, step_speed=None):
         """
         Sets the servo to move to the target angle using stepping motions.

@@ -1,12 +1,17 @@
 import uasyncio
 import bbl.v7rc as v7rc
 from bbl import ServosController, MotorsController, LEDController, MusicController
+from bbl.v7rc_parser import V7RCParser
 
 # Initialize all controllers
 servos = ServosController()
 motors = MotorsController()
 led1 = LEDController('LED1')
+led2 = LEDController('LED2')  # Second LED group for LE2 command
 music = MusicController('BUZZER1', volume=50)
+
+# Initialize V7RC parser
+parser = V7RCParser(log_func=print)
 
 # Periodic task to update servo stepping and motor PWM
 async def periodic_update():
@@ -14,93 +19,111 @@ async def periodic_update():
     while True:
         servos.timing_proc()  # Update servo stepping
         motors.motors_period_cb()  # Update motor PWM
+        led1.timing_proc()  # Update LED1 effects
+        led2.timing_proc()  # Update LED2 effects
         await uasyncio.sleep_ms(10)  # 100Hz update rate
 
-# V7RC command parser and handler
+# V7RC command handler
 def handle_v7rc_command(msg, addr):
     """
     Process incoming V7RC UDP commands
     
-    V7RC Protocol Format: SS89AABBCCDDEEFFGG#
-    - SS: Header (0x53 0x53)
-    - 89: Command type
-    - AA-GG: 7 data bytes (14 hex chars)
-    - #: Terminator (0x23)
-    
-    Data byte mapping:
-    - Byte 0-1 (AA-BB): Motor control
-    - Byte 2 (CC): Unknown/reserved
-    - Byte 3-6 (DD-EE-FF-GG): Servo 1-4 values
+    Supported V7RC Commands (all 20 bytes with '#' terminator):
+    - SRV: Basic PWM control (4 channels)
+    - SR2: Second PWM group (C5-C8) - not supported (only 4 servos)
+    - SS8: Simplified 8-channel PWM
+    - SRT: Tank mode PWM
+    - LED: 4 LED control with RGBM format
+    - LE2: Second LED group
     """
     print(f"[v7rc] UDP received: {msg} from {addr}")
     
-    if not msg or len(msg) < 20:
+    # Parse V7RC command
+    result = parser.parse(msg)
+    if not result:
         return
     
+    cmd_type = result['type']
+    data = result['data']
+    
     try:
-        # Validate format
-        if not msg.startswith(b'SS89') or not msg.endswith(b'#'):
-            return
+        if cmd_type == 'SRV':
+            # SRV: Basic PWM control for servos C1-C4
+            pwm_values = data['pwm']
+            print(f"[SRV] PWM: {pwm_values}")
+            for i in range(min(4, len(pwm_values))):
+                if pwm_values[i] > 0:  # Only update non-zero values
+                    servos.set_pwm(i + 1, pwm_values[i])
         
-        # Extract hex data (remove 'SS89' and '#')
-        data = msg[4:-1].decode('ascii')
+        elif cmd_type == 'SR2':
+            # SR2: Second PWM group (C5-C8) - not supported
+            print("[SR2] Warning: Only 4 servos supported (C1-C4). SR2 command ignored.")
         
-        # Parse all data bytes
-        bytes_data = []
-        for i in range(7):
-            hex_val = data[i*2:i*2+2]
-            bytes_data.append(int(hex_val, 16))
-        
-        # --- MOTOR CONTROL ---
-        # Bytes 0-1: Motor control (left/right or forward/reverse)
-        motor1_val = bytes_data[0]  # Left motor / Motor A
-        motor2_val = bytes_data[1]  # Right motor / Motor B
-        
-        # Map 0x00-0xFF to motor speed -2048 to +2048
-        # 0x69 (105) is neutral/stop
-        def map_motor_value(val):
-            if val == 0x69:  # Neutral
-                return 0
-            elif val > 0x69:  # Forward
-                return int(((val - 0x69) / (0xFF - 0x69)) * 2048)
-            else:  # Reverse
-                return -int(((0x69 - val) / 0x69) * 2048)
-        
-        speed1 = map_motor_value(motor1_val)
-        speed2 = map_motor_value(motor2_val)
-        
-        if speed1 != 0 or speed2 != 0:
-            print(f"[motor] M1: 0x{motor1_val:02X}→{speed1}, M2: 0x{motor2_val:02X}→{speed2}")
-            motors.set_speed(1, speed1)
-            motors.set_speed(2, speed2)
-        else:
-            motors.stop(1)
-            motors.stop(2)
-        
-        # --- SERVO CONTROL ---
-        # Bytes 3-6: Servo 1-4 values
-        for i in range(4):
-            servo_val = bytes_data[3 + i]
+        elif cmd_type == 'SS8':
+            # SS8: Simplified 8-channel PWM
+            # First 4 channels → servos, channels 5-6 → motors (optional)
+            pwm_values = data['pwm']
+            print(f"[SS8] PWM: {pwm_values}")
             
-            # Only update if not neutral position
-            if servo_val != 0x69:
-                # Map 0x00-0xFF to 0-180 degrees
-                angle = int((servo_val / 255.0) * 180)
-                servo_idx = i + 1
-                
-                print(f"[servo] S{servo_idx}: 0x{servo_val:02X}→{angle}°")
-                servos.set_angle(servo_idx, angle)
+            # Control servos (channels 1-4)
+            for i in range(min(4, len(pwm_values))):
+                if pwm_values[i] > 0:
+                    servos.set_pwm(i + 1, pwm_values[i])
+            
+            # Optionally control motors with channels 5-6
+            # Uncomment if you want SS8 to control motors:
+            # if len(pwm_values) >= 6:
+            #     # Map PWM 0-2550 to motor speed -2048 to +2048
+            #     # 1275 is neutral
+            #     motor1_speed = int((pwm_values[4] - 1275) * 2048 / 1275)
+            #     motor2_speed = int((pwm_values[5] - 1275) * 2048 / 1275)
+            #     motors.set_speed(1, motor1_speed)
+            #     motors.set_speed(2, motor2_speed)
         
-        # --- LED CONTROL (Optional) ---
-        # You can add LED effects based on motor/servo activity
-        # Example: Show green when motors active
-        if speed1 != 0 or speed2 != 0:
-            led1.set_led_effect(2, 0, 1, 0b1111, 0x00FF00)  # Solid green
-        else:
-            led1.set_led_effect(2, 0, 1, 0b1111, 0x0000FF)  # Solid blue
+        elif cmd_type == 'SRT':
+            # SRT: Tank mode PWM
+            throttle = data['throttle']
+            steering = data['steering']
+            print(f"[SRT] Throttle: {throttle}, Steering: {steering}")
+            motors.set_tank_mode(throttle, steering)
+            
+            # Also control servos C3-C4 if provided
+            pwm_values = data['pwm']
+            if len(pwm_values) >= 4:
+                for i in range(2, 4):
+                    if pwm_values[i] > 0:
+                        servos.set_pwm(i + 1, pwm_values[i])
+        
+        elif cmd_type == 'LED':
+            # LED: 4 LED control with RGBM format
+            leds = data['leds']
+            print(f"[LED] LEDs: {leds}")
+            for i, led_data in enumerate(leds):
+                led1.set_led_rgbm(
+                    i,
+                    led_data['r'],
+                    led_data['g'],
+                    led_data['b'],
+                    led_data['mode'],
+                    led_data['blink_ms']
+                )
+        
+        elif cmd_type == 'LE2':
+            # LE2: Second LED group
+            leds = data['leds']
+            print(f"[LE2] LEDs: {leds}")
+            for i, led_data in enumerate(leds):
+                led2.set_led_rgbm(
+                    i,
+                    led_data['r'],
+                    led_data['g'],
+                    led_data['b'],
+                    led_data['mode'],
+                    led_data['blink_ms']
+                )
         
     except Exception as e:
-        print(f"[parser] Error: {e}")
+        print(f"[v7rc] Handler error: {e}")
 
 # Initialize V7RC with custom callback
 start = v7rc.init_ap(
@@ -122,4 +145,3 @@ async def main():
 
 # Run the application
 uasyncio.run(main())
-
