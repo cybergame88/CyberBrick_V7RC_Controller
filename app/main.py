@@ -3,6 +3,13 @@ import bbl.v7rc as v7rc
 from bbl import ServosController, MotorsController, LEDController, MusicController
 from bbl.v7rc_parser import V7RCParser
 
+# Import motor driver configuration
+try:
+    from bbl.config import MOTOR_DRIVER_TYPE, MOTOR_DRIVER_CONFIG
+except ImportError:
+    MOTOR_DRIVER_TYPE = 'L298N'
+    MOTOR_DRIVER_CONFIG = {'L298N': {'use_hardware_pwm': False}}
+
 # Initialize all controllers
 servos = ServosController()
 motors = MotorsController()
@@ -16,9 +23,20 @@ parser = V7RCParser(log_func=print)
 # Periodic task to update servo stepping and motor PWM
 async def periodic_update():
     """Update servos and motors at regular intervals"""
+    # Determine if we need to call motor callback
+    driver_config = MOTOR_DRIVER_CONFIG.get(
+        motors.driver_type if hasattr(motors, 'driver_type') else MOTOR_DRIVER_TYPE,
+        {'use_hardware_pwm': False}
+    )
+    use_motor_callback = not driver_config['use_hardware_pwm']
+    
     while True:
         servos.timing_proc()  # Update servo stepping
-        motors.motors_period_cb()  # Update motor PWM
+        
+        # Only call motor callback for software PWM (L298N/TB6612)
+        if use_motor_callback:
+            motors.motors_period_cb()  # Update motor software PWM
+        
         led1.timing_proc()  # Update LED1 effects
         led2.timing_proc()  # Update LED2 effects
         await uasyncio.sleep_ms(10)  # 100Hz update rate

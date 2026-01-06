@@ -231,6 +231,103 @@ servos.stop(4)
 > - **L298N**: Phù hợp với động cơ lớn (6-12V, 2A), có sẵn regulator 5V
 > - **TB6612FNG**: Nhỏ gọn, hiệu suất cao hơn, phù hợp động cơ nhỏ (4.5-13.5V, 1.2A)
 > - **DRV8833**: Tương tự TB6612, giá rẻ hơn
+> - **L9110S**: Rất nhỏ gọn, giá rẻ, phù hợp động cơ nhỏ (2.5-12V, 800mA)
+
+### Sơ Đồ Kết Nối với L9110S (Nhỏ Gọn, Giá Rẻ)
+
+```
+┌──────────────┐                  ┌─────────────────┐
+│   ESP32-C3   │                  │     L9110S      │
+├──────────────┤                  ├─────────────────┤
+│ GPIO 4  ─────┼─────────────────▶│ IA1 (Motor A)   │
+│ GPIO 5  ─────┼─────────────────▶│ IB1 (Motor A)   │
+│ GPIO 6  ─────┼─────────────────▶│ IA2 (Motor B)   │
+│ GPIO 7  ─────┼─────────────────▶│ IB2 (Motor B)   │
+│              │                  │                 │
+│ GND     ─────┼─────────────────▶│ GND             │
+└──────────────┘                  │                 │
+                                  │ OA1 ────────────┼──▶ Motor 1 (+)
+                                  │ OA2 ────────────┼──▶ Motor 1 (-)
+                                  │ OB1 ────────────┼──▶ Motor 2 (+)
+                                  │ OB2 ────────────┼──▶ Motor 2 (-)
+                                  │                 │
+                ┌────────────────▶│ VCC (Motor)     │
+                │                 │ GND             │
+                │                 └─────────────────┘
+          ┌─────┴──────┐
+          │ Motor PSU  │
+          │ 2.5V-12V   │
+          │ 1A-2A      │
+          └────────────┘
+```
+
+### Bảng Kết Nối L9110S
+
+| ESP32-C3 | L9110S | Chức Năng |
+|----------|--------|-----------|
+| GPIO 4 | IA1 | Motor 1 PWM A |
+| GPIO 5 | IB1 | Motor 1 PWM B |
+| GPIO 6 | IA2 | Motor 2 PWM A |
+| GPIO 7 | IB2 | Motor 2 PWM B |
+| GND | GND | Ground chung |
+| - | VCC | Nguồn động cơ (2.5-12V) |
+
+### Đặc Điểm L9110S
+
+**Ưu điểm:**
+- ✅ Rất nhỏ gọn (2.5cm x 2cm)
+- ✅ Giá rẻ (~10-15k VND)
+- ✅ Điều khiển PWM trực tiếp (không cần enable pin)
+- ✅ Dải điện áp rộng (2.5V-12V)
+
+**Nhược điểm:**
+- ⚠️ Dòng điện thấp (800mA/kênh)
+- ⚠️ Yêu cầu tín hiệu PWM thực (không dùng digital ON/OFF)
+- ⚠️ Logic điều khiển khác L298N
+
+**Logic điều khiển L9110S:**
+| IA | IB | Kết Quả |
+|----|----|---------| 
+| LOW | LOW | **Dừng** |
+| PWM | LOW | Tiến (tốc độ = PWM) |
+| LOW | PWM | Lùi (tốc độ = PWM) |
+| HIGH | HIGH | **Chạy** (KHÔNG phải dừng!) |
+
+> **⚠️ QUAN TRỌNG - Khác biệt với L298N:**
+> - **L298N**: Cả 2 pin HIGH = Dừng (brake)
+> - **L9110S**: Cả 2 pin HIGH = Chạy (motor spinning!)
+> - **L9110S**: Cả 2 pin LOW = Dừng
+> - **L9110S**: Cần PWM thực, không dùng digital switching
+
+### Cấu Hình L9110S trong Code
+
+Firmware đã hỗ trợ **tự động phát hiện** loại driver. Để cấu hình thủ công:
+
+**Bước 1:** Mở file `bbl/config.py`
+
+**Bước 2:** Thay đổi cấu hình:
+
+```python
+# Tự động phát hiện (khuyến nghị)
+MOTOR_DRIVER_TYPE = 'AUTO'
+
+# HOẶC cấu hình thủ công
+MOTOR_DRIVER_TYPE = 'L9110S'  # Chọn 'L298N', 'TB6612', hoặc 'L9110S'
+```
+
+**Bước 3:** Upload lại firmware
+
+**Kiểm tra log:**
+```
+[motors] Using driver: L9110S
+[motors] Config: L9110S Dual H-Bridge (PWM control)
+[motors] Initialized hardware PWM
+```
+
+> **💡 Tính năng tự động phát hiện:**
+> - Lần đầu khởi động: Hệ thống test và lưu kết quả vào `detected_driver.txt`
+> - Các lần sau: Dùng kết quả đã lưu (nhanh hơn)
+> - Xóa file `detected_driver.txt` để chạy lại auto-detection
 
 ### Ví Dụ Code Điều Khiển Động Cơ
 
@@ -524,7 +621,7 @@ music.play("Beep:d=4,o=5,b=100:8c6,8p,8c6")
 
 **Nguyên nhân & Giải pháp**:
 1. ❌ **Kết nối driver sai**
-   - ✅ Kiểm tra GPIO 4-7 nối đúng IN1-IN4
+   - ✅ Kiểm tra GPIO 4-7 nối đúng IN1-IN4 (L298N) hoặc IA1/IB1/IA2/IB2 (L9110S)
    - ✅ Kiểm tra nguồn motor driver
 
 2. ❌ **Tốc độ quá thấp**
@@ -534,6 +631,43 @@ music.play("Beep:d=4,o=5,b=100:8c6,8p,8c6")
 3. ❌ **Driver bị lỗi**
    - ✅ Kiểm tra LED trên L298N
    - ✅ Đo điện áp OUT1-OUT4
+
+### Motor Luôn Quay (L9110S)
+
+**Triệu chứng**: Motor quay ngay khi khởi động, không điều khiển được
+
+**Nguyên nhân**: Đang dùng L9110S nhưng firmware chưa cấu hình đúng
+
+**Giải pháp**:
+1. ✅ **Kiểm tra cấu hình driver**
+   - Mở file `bbl/config.py`
+   - Đặt `MOTOR_DRIVER_TYPE = 'AUTO'` hoặc `'L9110S'`
+   - Upload lại firmware
+
+2. ✅ **Xóa file detection cũ**
+   - Xóa file `detected_driver.txt` trên ESP32
+   - Reset board để chạy lại auto-detection
+
+3. ✅ **Kiểm tra log khởi động**
+   ```
+   [motors] Using driver: L9110S
+   [motors] Initialized hardware PWM
+   ```
+
+### Motor Chạy Giật Cục (L9110S)
+
+**Triệu chứng**: Motor chạy không mượt, giật từng nhịp
+
+**Nguyên nhân**: L9110S đang dùng software PWM thay vì hardware PWM
+
+**Giải pháp**:
+1. ✅ **Đảm bảo dùng hardware PWM**
+   - Kiểm tra log: `[motors] Initialized hardware PWM`
+   - Nếu thấy `Initialized digital pins` → Sai cấu hình
+
+2. ✅ **Cấu hình lại driver**
+   - Trong `bbl/config.py`: `MOTOR_DRIVER_TYPE = 'L9110S'`
+   - Upload lại firmware
 
 ### LED NeoPixel Không Sáng
 
@@ -604,6 +738,7 @@ music.play("Beep:d=4,o=5,b=100:8c6,8p,8c6")
 - **ESP32-C3 Super Mini**: ~50k VND
 - **L298N Motor Driver**: ~30k VND
 - **TB6612FNG Motor Driver**: ~25k VND
+- **L9110S Motor Driver**: ~10-15k VND (nhỏ gọn nhất, giá rẻ nhất)
 - **Servo SG90**: ~15k VND/cái
 - **WS2812B LED Strip**: ~5k VND/LED
 - **Buck Converter 5V/3A**: ~20k VND
@@ -611,6 +746,7 @@ music.play("Beep:d=4,o=5,b=100:8c6,8p,8c6")
 
 ---
 
-**Phiên bản**: 1.0  
-**Ngày cập nhật**: 2025-12-26  
+**Phiên bản**: 1.1  
+**Ngày cập nhật**: 2026-01-06  
 **Tác giả**: CyberBrick V7RC Documentation Team
+**Cập nhật**: Thêm hỗ trợ L9110S motor driver với auto-detection

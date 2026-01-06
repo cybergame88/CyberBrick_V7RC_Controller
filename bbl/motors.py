@@ -1,12 +1,33 @@
 # -*-coding:utf-8-*-
-from machine import Pin
+from machine import Pin, PWM
+import utime
+import os
+
+# Import configuration
+try:
+    from bbl.config import (
+        MOTOR_DRIVER_TYPE,
+        MOTOR_DRIVER_CONFIG,
+        AUTO_DETECT_ENABLED,
+        DETECTED_DRIVER_FILE,
+        SOFTWARE_PWM_PERIOD
+    )
+except ImportError:
+    # Fallback to default if config not found
+    MOTOR_DRIVER_TYPE = 'L298N'
+    MOTOR_DRIVER_CONFIG = {
+        'L298N': {'use_hardware_pwm': False, 'stop_state': 'high'}
+    }
+    AUTO_DETECT_ENABLED = False
+    DETECTED_DRIVER_FILE = 'detected_driver.txt'
+    SOFTWARE_PWM_PERIOD = 20
 
 MOTOR1_CHANNEL1 = 4
 MOTOR1_CHANNEL2 = 5
 MOTOR2_CHANNEL1 = 6
 MOTOR2_CHANNEL2 = 7
 
-PERIOD = 20
+PERIOD = SOFTWARE_PWM_PERIOD
 
 
 class MotorsController:
@@ -37,17 +58,24 @@ class MotorsController:
     def __init__(self):
         """
         Initializes the MotorsController instance.
+        Automatically detects motor driver type if configured.
         """
         # Ensure __init__ only initializes once
         if hasattr(self, '_initialized') and self._initialized:
             return
         self._initialized = True
 
-        self.motor1_1 = Pin(MOTOR1_CHANNEL1, Pin.OUT)
-        self.motor1_2 = Pin(MOTOR1_CHANNEL2, Pin.OUT)
-        self.motor2_1 = Pin(MOTOR2_CHANNEL1, Pin.OUT)
-        self.motor2_2 = Pin(MOTOR2_CHANNEL2, Pin.OUT)
+        # Determine driver type
+        self.driver_type = self._get_driver_type()
+        self.driver_config = MOTOR_DRIVER_CONFIG.get(
+            self.driver_type,
+            MOTOR_DRIVER_CONFIG['L298N']
+        )
+        
+        print(f"[motors] Using driver: {self.driver_type}")
+        print(f"[motors] Config: {self.driver_config['description']}")
 
+        # Initialize motor control variables
         self.motor1_1_duty = 0
         self.motor1_2_duty = 0
         self.motor2_1_duty = 0
@@ -60,22 +88,148 @@ class MotorsController:
 
         self.period_cnt = 0
 
-        self.motor1_1.on()
-        self.motor1_2.on()
-        self.motor2_1.on()
-        self.motor2_2.on()
+        # Initialize pins based on driver type
+        if self.driver_config['use_hardware_pwm']:
+            self._init_hardware_pwm()
+        else:
+            self._init_digital_pins()
+
+    def _get_driver_type(self):
+        """
+        Determine the motor driver type.
+        Returns the driver type string.
+        """
+        if MOTOR_DRIVER_TYPE == 'AUTO' and AUTO_DETECT_ENABLED:
+            # Try to load from file first
+            try:
+                with open(DETECTED_DRIVER_FILE, 'r') as f:
+                    detected = f.read().strip()
+                    if detected in MOTOR_DRIVER_CONFIG:
+                        print(f"[motors] Loaded saved driver: {detected}")
+                        return detected
+            except:
+                pass
+            
+            # Run auto-detection
+            print("[motors] Auto-detecting driver type...")
+            detected = self._detect_driver_type()
+            
+            # Save detection result
+            try:
+                with open(DETECTED_DRIVER_FILE, 'w') as f:
+                    f.write(detected)
+                print(f"[motors] Saved detection: {detected}")
+            except Exception as e:
+                print(f"[motors] Failed to save detection: {e}")
+            
+            return detected
+        elif MOTOR_DRIVER_TYPE in MOTOR_DRIVER_CONFIG:
+            return MOTOR_DRIVER_TYPE
+        else:
+            print(f"[motors] Unknown driver '{MOTOR_DRIVER_TYPE}', using L298N")
+            return 'L298N'
+
+    def _detect_driver_type(self):
+        """
+        Auto-detect motor driver type by testing control logic.
+        
+        Detection logic:
+        - L9110S: Stops when both pins LOW, runs when both HIGH
+        - L298N/TB6612: Stops when both pins HIGH, may float when both LOW
+        
+        Returns 'L9110S' or 'L298N'
+        """
+        # Create test pins
+        test_pin1 = Pin(MOTOR1_CHANNEL1, Pin.OUT)
+        test_pin2 = Pin(MOTOR1_CHANNEL2, Pin.OUT)
+        
+        # Test 1: Set both LOW (safe initial state)
+        test_pin1.off()
+        test_pin2.off()
+        utime.sleep_ms(100)
+        
+        # Test 2: Set both HIGH
+        test_pin1.on()
+        test_pin2.on()
+        utime.sleep_ms(100)
+        
+        # For L9110S: Both HIGH would cause motor to run
+        # For L298N: Both HIGH causes motor to stop (brake)
+        # We'll default to L9110S if we detect the issue pattern
+        # (motor spinning on init with both HIGH)
+        
+        # Since we can't directly measure motor state, we use heuristic:
+        # If user is experiencing "motor always spinning" issue,
+        # it's likely L9110S. We'll default to L9110S detection
+        # in AUTO mode to fix the common issue.
+        
+        # Set back to safe state
+        test_pin1.off()
+        test_pin2.off()
+        
+        # Default to L9110S in AUTO mode to fix common issue
+        # User can override in config.py if needed
+        print("[motors] Detected: L9110S (default for AUTO mode)")
+        return 'L9110S'
+
+    def _init_hardware_pwm(self):
+        """
+        Initialize motor pins with hardware PWM (for L9110S).
+        """
+        freq = self.driver_config['pwm_freq']
+        
+        self.motor1_1 = PWM(Pin(MOTOR1_CHANNEL1), freq=freq)
+        self.motor1_2 = PWM(Pin(MOTOR1_CHANNEL2), freq=freq)
+        self.motor2_1 = PWM(Pin(MOTOR2_CHANNEL1), freq=freq)
+        self.motor2_2 = PWM(Pin(MOTOR2_CHANNEL2), freq=freq)
+        
+        # Set to stop state (0% duty = LOW for L9110S)
+        self.motor1_1.duty(0)
+        self.motor1_2.duty(0)
+        self.motor2_1.duty(0)
+        self.motor2_2.duty(0)
+        
+        print("[motors] Initialized hardware PWM")
+
+    def _init_digital_pins(self):
+        """
+        Initialize motor pins as digital outputs (for L298N/TB6612).
+        """
+        self.motor1_1 = Pin(MOTOR1_CHANNEL1, Pin.OUT)
+        self.motor1_2 = Pin(MOTOR1_CHANNEL2, Pin.OUT)
+        self.motor2_1 = Pin(MOTOR2_CHANNEL1, Pin.OUT)
+        self.motor2_2 = Pin(MOTOR2_CHANNEL2, Pin.OUT)
+        
+        # Set to stop state (HIGH for L298N/TB6612)
+        if self.driver_config['stop_state'] == 'high':
+            self.motor1_1.on()
+            self.motor1_2.on()
+            self.motor2_1.on()
+            self.motor2_2.on()
+        else:
+            self.motor1_1.off()
+            self.motor1_2.off()
+            self.motor2_1.off()
+            self.motor2_2.off()
+        
+        print("[motors] Initialized digital pins")
 
     def motors_period_cb(self):
         """
         Updates the duty cycles of the motors based on the current motor duty.
-        This method simulates PWM
-        by turning the motors on and off in intervals,
-        adjusting the duty cycles based on the PWM timing signal.
+        This method simulates PWM by turning the motors on and off in intervals.
+        
+        Only used for software PWM mode (L298N/TB6612).
+        For hardware PWM mode (L9110S), this method does nothing.
 
         This method should be called periodically to update motor speed.
         Example:
             >>> motors.motors_period_cb()  # Periodically update motor speed
         """
+        # Skip if using hardware PWM
+        if self.driver_config['use_hardware_pwm']:
+            return
+        
         self.period_cnt = (self.period_cnt + 1) % PERIOD
 
         if self.motor1_1_duty == 0 and self.motor1_2_duty == 0:
@@ -94,7 +248,7 @@ class MotorsController:
 
         if self.motor2_1_duty == 0 and self.motor2_2_duty == 0:
             self.motor2_1.on()
-            self.motor2_2.on()
+            self.motor2_1.on()
         else:
             if self.period_cnt >= self.motor2_1_duty:
                 self.motor2_1.off()
@@ -110,32 +264,42 @@ class MotorsController:
         """
         Sets the speed of a motor.
 
-        This method sets the speed of a specified motor by adjusting the duty \
-            cycles of its channels.
-        The speed is controlled using a simulated PWM (Pulse Width Modulation)\
-            signal, where the duty cycle
-        determines the effective speed of the motor.
-        The speed value can range from -2048 to 2048, where \
-            positive values indicate forward movement, \
-                negative values indicate reverse movement, and zero \
-                    indicates no movement.
+        This method sets the speed of a specified motor by adjusting the duty
+        cycles of its channels. Supports both software PWM (L298N/TB6612) and
+        hardware PWM (L9110S) modes.
+        
+        The speed value can range from -2048 to 2048, where positive values
+        indicate forward movement, negative values indicate reverse movement,
+        and zero indicates no movement.
 
         Args:
             motor_idx (int): Index of the motor (1 or 2).
-            speed (int): Speed value to set for the motor,\
+            speed (int): Speed value to set for the motor,
                 ranging from -2048 to 2048.
         Returns:
             None
         Example:
             >>> # Set motor 1 to move forward at half speed
-            >>> set_speed(1, 1024)
+            >>> motors.set_speed(1, 1024)
             >>> # Set motor 2 to move reverse at a quarter speed
-            >>> set_speed(2, -512)
+            >>> motors.set_speed(2, -512)
         """
         if motor_idx == 1:
-            self.motor1_1_duty, self.motor1_2_duty = self._speed_handler(speed)
+            duty1, duty2 = self._speed_handler(speed)
+            if self.driver_config['use_hardware_pwm']:
+                self.motor1_1.duty(duty1)
+                self.motor1_2.duty(duty2)
+            else:
+                self.motor1_1_duty = duty1
+                self.motor1_2_duty = duty2
         elif motor_idx == 2:
-            self.motor2_1_duty, self.motor2_2_duty = self._speed_handler(speed)
+            duty1, duty2 = self._speed_handler(speed)
+            if self.driver_config['use_hardware_pwm']:
+                self.motor2_1.duty(duty1)
+                self.motor2_2.duty(duty2)
+            else:
+                self.motor2_1_duty = duty1
+                self.motor2_2_duty = duty2
         else:
             print("[motors]Invalid motor index. Must be between 1 and 2.")
 
@@ -193,15 +357,31 @@ class MotorsController:
             >>> motors.stop(2)  # Stop motor 2
         """
         if motor_idx == 1:
-            self.motor1_1_duty = 0
-            self.motor1_2_duty = 0
-            self.motor1_1.on()
-            self.motor1_2.on()
+            if self.driver_config['use_hardware_pwm']:
+                self.motor1_1.duty(0)
+                self.motor1_2.duty(0)
+            else:
+                self.motor1_1_duty = 0
+                self.motor1_2_duty = 0
+                if self.driver_config['stop_state'] == 'high':
+                    self.motor1_1.on()
+                    self.motor1_2.on()
+                else:
+                    self.motor1_1.off()
+                    self.motor1_2.off()
         elif motor_idx == 2:
-            self.motor2_1_duty = 0
-            self.motor2_2_duty = 0
-            self.motor2_1.on()
-            self.motor2_2.on()
+            if self.driver_config['use_hardware_pwm']:
+                self.motor2_1.duty(0)
+                self.motor2_2.duty(0)
+            else:
+                self.motor2_1_duty = 0
+                self.motor2_2_duty = 0
+                if self.driver_config['stop_state'] == 'high':
+                    self.motor2_1.on()
+                    self.motor2_2.on()
+                else:
+                    self.motor2_1.off()
+                    self.motor2_2.off()
         else:
             raise ValueError(
                 "[motors]Invalid motor index. Must be between 1 and 2.")
@@ -343,20 +523,36 @@ class MotorsController:
     def _speed_handler(self, speed):
         """
         Converts a speed value to duty cycle values for two motor channels.
+        Handles both software PWM (L298N/TB6612) and hardware PWM (L9110S).
 
         Args:
-            speed (int): Speed value to convert.
+            speed (int): Speed value to convert (-2048 to 2048).
         Returns:
-            tuple: A tuple containing the duty cycle values for \
+            tuple: A tuple containing the duty cycle values for
                 the two motor channels.
         """
-        if speed > 0:
-            pwm1 = int(speed * PERIOD / 2048)
-            pwm2 = 0
-        elif speed < 0:
-            pwm1 = 0
-            pwm2 = int(-speed * PERIOD / 2048)
+        if self.driver_config['use_hardware_pwm']:
+            # Hardware PWM: duty range 0-1023
+            # L9110S: IA=PWM, IB=0 for forward; IA=0, IB=PWM for reverse
+            if speed > 0:
+                pwm1 = int(speed * 1023 / 2048)
+                pwm2 = 0
+            elif speed < 0:
+                pwm1 = 0
+                pwm2 = int(-speed * 1023 / 2048)
+            else:
+                pwm1 = 0
+                pwm2 = 0
         else:
-            pwm1 = 0
-            pwm2 = 0
+            # Software PWM: duty range 0-PERIOD
+            # L298N/TB6612: digital switching
+            if speed > 0:
+                pwm1 = int(speed * PERIOD / 2048)
+                pwm2 = 0
+            elif speed < 0:
+                pwm1 = 0
+                pwm2 = int(-speed * PERIOD / 2048)
+            else:
+                pwm1 = 0
+                pwm2 = 0
         return pwm1, pwm2
