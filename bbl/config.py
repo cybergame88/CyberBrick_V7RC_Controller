@@ -40,13 +40,15 @@ MOTOR_DRIVER_CONFIG = {
         'description': 'TB6612FNG Dual H-Bridge (digital control)'
     },
     'L9110S': {
-        'use_hardware_pwm': True,
+        'use_hardware_pwm': False,  # Use software PWM (ESP32-C3 only has 6 PWM channels, servos use 4)
         'pwm_freq': 1000,
         'logic_type': 'pwm',
         'stop_state': 'low',  # Both pins LOW to stop
-        'description': 'L9110S Dual H-Bridge (PWM control)'
+        'pwm_period': 100,  # Higher resolution software PWM (100 steps vs 20)
+        'description': 'L9110S Dual H-Bridge (software PWM control)'
     }
 }
 
-# Software PWM settings (for L298N/TB6612)
-SOFTWARE_PWM_PERIOD = 20  # 20 steps for software PWM
+# Software PWM settings
+SOFTWARE_PWM_PERIOD = 20  # Default for L298N/TB6612
+L9110S_PWM_PERIOD = 100   # Higher resolution for L9110S

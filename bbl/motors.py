@@ -10,24 +10,26 @@ try:
         MOTOR_DRIVER_CONFIG,
         AUTO_DETECT_ENABLED,
         DETECTED_DRIVER_FILE,
-        SOFTWARE_PWM_PERIOD
+        SOFTWARE_PWM_PERIOD,
+        L9110S_PWM_PERIOD
     )
 except ImportError:
     # Fallback to default if config not found
     MOTOR_DRIVER_TYPE = 'L298N'
     MOTOR_DRIVER_CONFIG = {
-        'L298N': {'use_hardware_pwm': False, 'stop_state': 'high'}
+        'L298N': {'use_hardware_pwm': False, 'stop_state': 'high', 'pwm_period': 20}
     }
     AUTO_DETECT_ENABLED = False
     DETECTED_DRIVER_FILE = 'detected_driver.txt'
     SOFTWARE_PWM_PERIOD = 20
+    L9110S_PWM_PERIOD = 100
 
 MOTOR1_CHANNEL1 = 4
 MOTOR1_CHANNEL2 = 5
 MOTOR2_CHANNEL1 = 6
 MOTOR2_CHANNEL2 = 7
 
-PERIOD = SOFTWARE_PWM_PERIOD
+# PERIOD will be set dynamically based on driver type
 
 
 class MotorsController:
@@ -74,6 +76,10 @@ class MotorsController:
         
         print(f"[motors] Using driver: {self.driver_type}")
         print(f"[motors] Config: {self.driver_config['description']}")
+
+        # Set PWM period based on driver type
+        self.period = self.driver_config.get('pwm_period', SOFTWARE_PWM_PERIOD)
+        print(f"[motors] PWM period: {self.period} steps")
 
         # Initialize motor control variables
         self.motor1_1_duty = 0
@@ -230,7 +236,7 @@ class MotorsController:
         if self.driver_config['use_hardware_pwm']:
             return
         
-        self.period_cnt = (self.period_cnt + 1) % PERIOD
+        self.period_cnt = (self.period_cnt + 1) % self.period
 
         if self.motor1_1_duty == 0 and self.motor1_2_duty == 0:
             self.motor1_1.on()
@@ -523,7 +529,7 @@ class MotorsController:
     def _speed_handler(self, speed):
         """
         Converts a speed value to duty cycle values for two motor channels.
-        Handles both software PWM (L298N/TB6612) and hardware PWM (L9110S).
+        Handles both software PWM (L298N/TB6612/L9110S) and hardware PWM.
 
         Args:
             speed (int): Speed value to convert (-2048 to 2048).
@@ -545,13 +551,13 @@ class MotorsController:
                 pwm2 = 0
         else:
             # Software PWM: duty range 0-PERIOD
-            # L298N/TB6612: digital switching
+            # L298N/TB6612/L9110S: digital switching with software PWM
             if speed > 0:
-                pwm1 = int(speed * PERIOD / 2048)
+                pwm1 = int(speed * self.period / 2048)
                 pwm2 = 0
             elif speed < 0:
                 pwm1 = 0
-                pwm2 = int(-speed * PERIOD / 2048)
+                pwm2 = int(-speed * self.period / 2048)
             else:
                 pwm1 = 0
                 pwm2 = 0

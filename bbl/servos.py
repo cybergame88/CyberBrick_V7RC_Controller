@@ -28,17 +28,22 @@ class ServosController:
 
     def __init__(self):
         """
-        Initializes the ServosController instance.
+        Initializes the ServosController instance with lazy PWM allocation.
+        PWM objects are created only when servos are first used to conserve
+        ESP32-C3's limited PWM channels (only 6 total).
+        
         Example:
             >>> servos = ServosController()
             >>> # Initializes servos on channels 1 to 4.
         """
-        self.servo1_pwm = PWM(Pin(SERVO_CHANNEL1), freq=50)
-        self.servo2_pwm = PWM(Pin(SERVO_CHANNEL2), freq=50)
-        self.servo3_pwm = PWM(Pin(SERVO_CHANNEL3), freq=50)
-        self.servo4_pwm = PWM(Pin(SERVO_CHANNEL4), freq=50)
+        # Lazy PWM allocation - create PWM only when needed
+        self.servo1_pwm = None
+        self.servo2_pwm = None
+        self.servo3_pwm = None
+        self.servo4_pwm = None
+        
         self.servos_map = [
-            self.servo1_pwm, self.servo2_pwm, self.servo3_pwm, self.servo4_pwm
+            None, None, None, None  # Will be initialized on first use
         ]
         self.servos_info_map = [
             {"c_ang": 0, "s_ang": 0, "rh_ang": 0, "vel": 0, "step_en": False},
@@ -48,6 +53,35 @@ class ServosController:
         ]
         self.sensitity = 180
         self.tim_call_freq = 100
+        
+        print("[servos] Initialized with lazy PWM allocation")
+    
+    def _ensure_pwm(self, servo_idx):
+        """
+        Ensures PWM object exists for the specified servo index.
+        Creates PWM object on first use (lazy allocation).
+        
+        Args:
+            servo_idx (int): Servo index (1-4)
+        """
+        internal_idx = servo_idx - 1
+        
+        if not 0 <= internal_idx < 4:
+            return False
+        
+        if self.servos_map[internal_idx] is None:
+            # Create PWM object on first use
+            channel_map = [SERVO_CHANNEL1, SERVO_CHANNEL2, SERVO_CHANNEL3, SERVO_CHANNEL4]
+            try:
+                pwm = PWM(Pin(channel_map[internal_idx]), freq=50)
+                self.servos_map[internal_idx] = pwm
+                print(f"[servos] Allocated PWM for servo {servo_idx} on GPIO {channel_map[internal_idx]}")
+            except RuntimeError as e:
+                print(f"[servos] ERROR: Failed to allocate PWM for servo {servo_idx}: {e}")
+                print(f"[servos] Hint: ESP32-C3 has only 6 PWM channels. Check motor driver config.")
+                return False
+        
+        return True
 
     def set_angle(self, servo_idx, angle):
         """
@@ -66,6 +100,10 @@ class ServosController:
         """
         if not 0 <= angle <= 180:
             print("[servo]Invalid angle, Must be between 0 and 180.")
+            return
+
+        # Ensure PWM is allocated
+        if not self._ensure_pwm(servo_idx):
             return
 
         duty = (int)(angle * 102 / 180 + 25)
@@ -96,6 +134,10 @@ class ServosController:
         """
         if not 500 <= pwm_us <= 2500:
             print("[servo]Invalid PWM value. Must be between 500 and 2500μs.")
+            return
+
+        # Ensure PWM is allocated
+        if not self._ensure_pwm(servo_idx):
             return
 
         # Convert PWM microseconds to duty cycle
@@ -221,6 +263,10 @@ class ServosController:
             print("[servo]Invalid speed, Must be between -100 and 100.")
             return
 
+        # Ensure PWM is allocated
+        if not self._ensure_pwm(servo_idx):
+            return
+
         duty = round(speed_percentage * 51.2 / 100 + 76.8)
         internal_idx = servo_idx - 1
 
@@ -250,6 +296,10 @@ class ServosController:
             >>> # Set the duty cycle of servo 3 to 100
             >>> servos.set_duty(3, 100)
         """
+        # Ensure PWM is allocated
+        if not self._ensure_pwm(servo_idx):
+            return
+
         internal_idx = servo_idx - 1
 
         if 0 <= internal_idx < len(self.servos_map):
@@ -272,6 +322,10 @@ class ServosController:
             >>> servos.timing_proc()
         """
         for servo_idx in range(4):
+            # Skip if PWM not allocated yet (lazy allocation)
+            if self.servos_map[servo_idx] is None:
+                continue
+            
             if self.servos_info_map[servo_idx]["step_en"] is False:
                 continue
 
@@ -310,7 +364,9 @@ class ServosController:
         internal_idx = servo_idx - 1
 
         if 0 <= internal_idx < len(self.servos_map):
-            self.servos_map[internal_idx].duty(0)
+            # Only stop if PWM was allocated
+            if self.servos_map[internal_idx] is not None:
+                self.servos_map[internal_idx].duty(0)
         else:
             raise ValueError(
                 "[servo]Invalid servo index. Must be between 1 and 4.")
