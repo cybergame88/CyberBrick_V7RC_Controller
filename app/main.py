@@ -116,29 +116,57 @@ def handle_v7rc_command(msg, addr):
             # LED: 4 LED control with RGBM format
             leds = data['leds']
             print(f"[LED] LEDs: {leds}")
+            
+            # Group LEDs by (color, mode, blink_ms) to apply effects efficiently
+            # This prevents each LED from overwriting the previous one
+            led_groups = {}
             for i, led_data in enumerate(leds):
-                led1.set_led_rgbm(
-                    i,
-                    led_data['r'],
-                    led_data['g'],
-                    led_data['b'],
-                    led_data['mode'],
-                    led_data['blink_ms']
-                )
+                key = (led_data['r'], led_data['g'], led_data['b'], 
+                       led_data['mode'], led_data['blink_ms'])
+                if key not in led_groups:
+                    led_groups[key] = []
+                led_groups[key].append(i)
+            
+            # Apply effect for each group
+            for (r, g, b, mode, blink_ms), led_indices in led_groups.items():
+                # Create bitmask for all LEDs in this group
+                led_mask = sum(1 << idx for idx in led_indices)
+                rgb = (r << 16) | (g << 8) | b
+                
+                if mode == 'off':
+                    led1.set_led_effect(0, 0, 1, led_mask, 0x000000)
+                elif mode == 'solid':
+                    led1.set_led_effect(0, 0, 0xFF, led_mask, rgb)
+                elif mode == 'blink':
+                    duration = blink_ms * 2 if blink_ms > 0 else 1000
+                    led1.set_led_effect(1, duration, 0xFF, led_mask, rgb)
         
         elif cmd_type == 'LE2':
             # LE2: Second LED group
             leds = data['leds']
             print(f"[LE2] LEDs: {leds}")
+            
+            # Group LEDs by (color, mode, blink_ms) to apply effects efficiently
+            led_groups = {}
             for i, led_data in enumerate(leds):
-                led2.set_led_rgbm(
-                    i,
-                    led_data['r'],
-                    led_data['g'],
-                    led_data['b'],
-                    led_data['mode'],
-                    led_data['blink_ms']
-                )
+                key = (led_data['r'], led_data['g'], led_data['b'], 
+                       led_data['mode'], led_data['blink_ms'])
+                if key not in led_groups:
+                    led_groups[key] = []
+                led_groups[key].append(i)
+            
+            # Apply effect for each group
+            for (r, g, b, mode, blink_ms), led_indices in led_groups.items():
+                led_mask = sum(1 << idx for idx in led_indices)
+                rgb = (r << 16) | (g << 8) | b
+                
+                if mode == 'off':
+                    led2.set_led_effect(0, 0, 1, led_mask, 0x000000)
+                elif mode == 'solid':
+                    led2.set_led_effect(0, 0, 0xFF, led_mask, rgb)
+                elif mode == 'blink':
+                    duration = blink_ms * 2 if blink_ms > 0 else 1000
+                    led2.set_led_effect(1, duration, 0xFF, led_mask, rgb)
         
     except Exception as e:
         print(f"[v7rc] Handler error: {e}")
