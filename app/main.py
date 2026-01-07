@@ -79,7 +79,7 @@ def handle_v7rc_command(msg, addr):
         
         elif cmd_type == 'SS8':
             # SS8: Simplified 8-channel PWM
-            # First 4 channels → servos, channels 5-6 → motors (optional)
+            # First 4 channels → servos, channels 5-6 → motors
             pwm_values = data['pwm']
             print(f"[SS8] PWM: {pwm_values}")
             
@@ -88,15 +88,20 @@ def handle_v7rc_command(msg, addr):
                 if pwm_values[i] > 0:
                     servos.set_pwm(i + 1, pwm_values[i])
             
-            # Optionally control motors with channels 5-6
-            # Uncomment if you want SS8 to control motors:
-            # if len(pwm_values) >= 6:
-            #     # Map PWM 0-2550 to motor speed -2048 to +2048
-            #     # 1275 is neutral
-            #     motor1_speed = int((pwm_values[4] - 1275) * 2048 / 1275)
-            #     motor2_speed = int((pwm_values[5] - 1275) * 2048 / 1275)
-            #     motors.set_speed(1, motor1_speed)
-            #     motors.set_speed(2, motor2_speed)
+            # Control motors with channels 5-6
+            if len(pwm_values) >= 6:
+                # Map PWM 0-2550 to motor speed -2048 to +2048
+                # 1275 is neutral (center)
+                motor1_speed = int((pwm_values[4] - 1275) * 2048 / 1275)
+                motor2_speed = int((pwm_values[5] - 1275) * 2048 / 1275)
+                
+                # Clamp to valid range
+                motor1_speed = max(-2048, min(2048, motor1_speed))
+                motor2_speed = max(-2048, min(2048, motor2_speed))
+                
+                motors.set_speed(1, motor1_speed)
+                motors.set_speed(2, motor2_speed)
+                print(f"[SS8] Motor speeds: M1={motor1_speed}, M2={motor2_speed}")
         
         elif cmd_type == 'SRT':
             # SRT: Tank mode PWM
