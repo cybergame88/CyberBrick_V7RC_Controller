@@ -317,19 +317,22 @@ class MotorsController:
         motor speeds for tracked/wheeled robots.
         
         Args:
-            throttle_pwm (int): Forward/reverse control (0-2000, 1000=neutral)
-            steering_pwm (int): Left/right steering (0-2000, 1000=neutral)
+            throttle_pwm (int): Forward/reverse control (0-2000, 1500=neutral)
+            steering_pwm (int): Left/right steering (0-2000, 1500=neutral)
             
         Example:
-            >>> # Move forward: throttle=1500, steering=1000 (neutral)
-            >>> motors.set_tank_mode(1500, 1000)
-            >>> # Turn right while moving: throttle=1500, steering=1500
+            >>> # Neutral (stopped): throttle=1500, steering=1500
             >>> motors.set_tank_mode(1500, 1500)
+            >>> # Move forward: throttle=1800, steering=1500
+            >>> motors.set_tank_mode(1800, 1500)
+            >>> # Turn right while moving: throttle=1800, steering=1800
+            >>> motors.set_tank_mode(1800, 1800)
         """
         # Convert PWM values (0-2000) to -1024 to +1024 range
-        # 1000 is neutral (center)
-        throttle = int((throttle_pwm - 1000) * 2048 / 1000)
-        steering = int((steering_pwm - 1000) * 2048 / 1000)
+        # 1500 is neutral (center) - FIXED from 1000!
+        NEUTRAL = 1500
+        throttle = int((throttle_pwm - NEUTRAL) * 2048 / 1000)
+        steering = int((steering_pwm - NEUTRAL) * 2048 / 1000)
         
         # Clamp to valid range
         throttle = max(-2048, min(2048, throttle))

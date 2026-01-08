@@ -10,6 +10,17 @@ except ImportError:
     MOTOR_DRIVER_TYPE = 'L298N'
     MOTOR_DRIVER_CONFIG = {'L298N': {'use_hardware_pwm': False}}
 
+# Import BLE configuration
+try:
+    from bbl.config import BLE_ENABLED, BLE_DEVICE_NAME, CONNECTION_MODE
+    from bbl.ble import BLEService
+    ble_available = True
+except ImportError:
+    BLE_ENABLED = False
+    CONNECTION_MODE = 'WIFI'
+    ble_available = False
+    print("[main] BLE not available (import failed)")
+
 # Initialize all controllers
 servos = ServosController()
 motors = MotorsController()
@@ -66,7 +77,7 @@ def handle_v7rc_command(msg, addr):
     
     try:
         if cmd_type == 'SRV':
-            # SRV: Basic PWM control for servos C1-C4
+            # SRV: Car mode with basic PWM control for servos C1-C4
             pwm_values = data['pwm']
             print(f"[SRV] PWM: {pwm_values}")
             for i in range(min(4, len(pwm_values))):
@@ -78,7 +89,7 @@ def handle_v7rc_command(msg, addr):
             print("[SR2] Warning: Only 4 servos supported (C1-C4). SR2 command ignored.")
         
         elif cmd_type == 'SS8':
-            # SS8: Simplified 8-channel PWM
+            # SS8: Pro + BOT + BOT2 mode with Simplified 8-channel PWM
             # First 4 channels → servos, channels 5-6 → motors
             pwm_values = data['pwm']
             print(f"[SS8] PWM: {pwm_values}")
@@ -99,16 +110,39 @@ def handle_v7rc_command(msg, addr):
                 motor1_speed = max(-2048, min(2048, motor1_speed))
                 motor2_speed = max(-2048, min(2048, motor2_speed))
                 
+                # Apply deadzone for neutral position
+                # SS8 neutral: 0x96 (150) → 1500 PWM → speed = 361
+                # Deadzone 380 catches neutral (361) but allows control at ~400+
+                # This is ~18.5% deadzone - good balance between idle stop and sensitivity
+                DEADZONE = 380
+                if abs(motor1_speed) < DEADZONE:
+                    motor1_speed = 0
+                if abs(motor2_speed) < DEADZONE:
+                    motor2_speed = 0
+                
                 motors.set_speed(1, motor1_speed)
                 motors.set_speed(2, motor2_speed)
                 print(f"[SS8] Motor speeds: M1={motor1_speed}, M2={motor2_speed}")
         
         elif cmd_type == 'SRT':
-            # SRT: Tank mode PWM
+            # SRT: Tank mode with PWM
             throttle = data['throttle']
             steering = data['steering']
             print(f"[SRT] Throttle: {throttle}, Steering: {steering}")
-            motors.set_tank_mode(throttle, steering)
+            
+            # Check if in neutral position (1500 ± 50)
+            # If both throttle and steering are neutral, stop motors
+            NEUTRAL = 1500
+            DEADZONE = 50
+            
+            if abs(throttle - NEUTRAL) < DEADZONE and abs(steering - NEUTRAL) < DEADZONE:
+                # Neutral position - stop motors
+                motors.stop(1)
+                motors.stop(2)
+                print("[SRT] Neutral - motors stopped")
+            else:
+                # Active control - use tank mode
+                motors.set_tank_mode(throttle, steering)
             
             # Also control servos C3-C4 if provided
             pwm_values = data['pwm']
@@ -176,23 +210,56 @@ def handle_v7rc_command(msg, addr):
     except Exception as e:
         print(f"[v7rc] Handler error: {e}")
 
-# Initialize V7RC with custom callback
-start = v7rc.init_ap(
-    essid='cyber_V7RC',
-    password='12341234',
-    udp_ip='192.168.4.1',
-    udp_port=6188,
-    use_default_led=True,  # Enable built-in LED (GPIO 8)
-    cb=handle_v7rc_command
-)
+# Initialize WiFi if enabled
+start = None
+if CONNECTION_MODE in ['WIFI', 'BOTH']:
+    start = v7rc.init_ap(
+        essid='Cyber_V7RC',
+        password='12341234',
+        udp_ip='192.168.4.1',
+        udp_port=6188,
+        use_default_led=True,  # Enable built-in LED (GPIO 8)
+        cb=handle_v7rc_command
+    )
+    print(f"[main] WiFi AP initialized")
+
+# Initialize BLE if enabled
+ble_service = None
+if BLE_ENABLED and ble_available and CONNECTION_MODE in ['BLE', 'BOTH']:
+    try:
+        ble_service = BLEService(
+            name=BLE_DEVICE_NAME,
+            callback=handle_v7rc_command  # Reuse same V7RC handler!
+        )
+        print(f"[main] BLE initialized: {BLE_DEVICE_NAME}")
+    except Exception as e:
+        print(f"[main] BLE init failed: {e}")
+        ble_service = None
 
 # Main async function
 async def main():
     """Run V7RC server and periodic updates"""
-    await uasyncio.gather(
-        start(),
-        periodic_update()
-    )
+    tasks = [periodic_update()]
+    
+    # Add WiFi task if enabled
+    if start is not None:
+        tasks.append(start())
+        print("[main] WiFi task added")
+    
+    # BLE runs in background via IRQ, no task needed
+    if ble_service is not None:
+        print("[main] BLE running in background")
+    
+    # Print active connection modes
+    active_modes = []
+    if start is not None:
+        active_modes.append("WiFi")
+    if ble_service is not None:
+        active_modes.append("BLE")
+    print(f"[main] Active connections: {', '.join(active_modes) if active_modes else 'None'}")
+    
+    await uasyncio.gather(*tasks)
 
 # Run the application
+print("[main] Starting CyberBrick V7RC...")
 uasyncio.run(main())
